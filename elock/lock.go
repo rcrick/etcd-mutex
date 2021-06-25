@@ -17,16 +17,7 @@ type Mutex struct {
 	myRev   int64
 	ttl     int64
 	leaseId v3.LeaseID
-	// Hdr   *pb.ResponseHeader
 }
-
-// // var client *v3.Client
-// func Init() {
-// 	client, err := v3.New(v3.Config{Endpoints: []string{"127.0.0.1:2379"}})
-// 	if err != nil {
-// 		return
-// 	}
-// }
 
 type Err string
 
