@@ -44,7 +44,7 @@ func (m *Mutex) grantLease(ctx context.Context) error {
 		return nil
 	}
 
-	// if the lease is no longer alive, we should new grant a
+	// if the lease is no longer alive, we should grant a
 	// new lease
 	if resp.TTL <= 0 {
 		resp, err := m.client.Grant(ctx, m.ttl)
@@ -59,7 +59,7 @@ func (m *Mutex) grantLease(ctx context.Context) error {
 
 func (m *Mutex) AcquireOnce(ctx context.Context) error {
 	m.grantLease(ctx)
-	// // m.myKey eg : /etcdlock/3f357a41d952f12c
+	// m.myKey eg : /etcdlock/3f357a41d952f12c
 	m.myKey = fmt.Sprintf("%s%x", m.pfx, m.leaseId)
 
 	// 比较当前m.myKey的CreateRevision是否为0，0代表目前不存在该key，执行put操作
@@ -88,7 +88,8 @@ func (m *Mutex) AcquireOnce(ctx context.Context) error {
 	if txnResp.Succeeded != true {
 		m.myRev = txnResp.Responses[0].GetResponseRange().Kvs[0].CreateRevision
 	}
-	//
+	// if these is no owner or owner's revision equal current revision that means
+	// get lock success
 	ownerKey := txnResp.Responses[1].GetResponseRange().Kvs
 	log.Printf("key: %s id: %d acquire once", m.myKey, m.myRev)
 	if len(ownerKey) == 0 || ownerKey[0].CreateRevision == m.myRev {
