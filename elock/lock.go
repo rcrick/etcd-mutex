@@ -19,11 +19,6 @@ type Mutex struct {
 	leaseId v3.LeaseID
 }
 
-type Err string
-
-func (e Err) Error() string {
-	return string(e)
-}
 func NewMutex(client *v3.Client, pfx string, ttl int64) *Mutex {
 	return &Mutex{
 		client: client,
@@ -34,13 +29,37 @@ func NewMutex(client *v3.Client, pfx string, ttl int64) *Mutex {
 	}
 }
 
-func (m *Mutex) AcquireOnce(ctx context.Context) error {
-	// 3f357a41d952f076
-	resp, err := m.client.Grant(ctx, int64(m.ttl))
-	if err != nil {
-		return err
+func (m *Mutex) grantLease(ctx context.Context) error {
+	if m.leaseId == v3.NoLease {
+		resp, err := m.client.Grant(ctx, m.ttl)
+		if err != nil {
+			return nil
+		}
+		m.leaseId = resp.ID
+		return nil
 	}
-	m.leaseId = resp.ID
+
+	resp, err := m.client.TimeToLive(ctx, m.leaseId)
+	if err != nil {
+		return nil
+	}
+
+	// if the lease is no longer alive, we should new grant a
+	// new lease
+	if resp.TTL <= 0 {
+		resp, err := m.client.Grant(ctx, m.ttl)
+		if err != nil {
+			return nil
+		}
+		m.leaseId = resp.ID
+
+	}
+	return nil
+}
+
+func (m *Mutex) AcquireOnce(ctx context.Context) error {
+	m.grantLease(ctx)
+	// // m.myKey eg : /etcdlock/3f357a41d952f12c
 	m.myKey = fmt.Sprintf("%s%x", m.pfx, m.leaseId)
 
 	// 比较当前m.myKey的CreateRevision是否为0，0代表目前不存在该key，执行put操作
@@ -53,12 +72,19 @@ func (m *Mutex) AcquireOnce(ctx context.Context) error {
 	// 获取当前锁真正的持有者
 	getOwner := v3.OpGet(m.pfx, v3.WithFirstCreate()...)
 	// cmp条件成立，则执行then，否则执行else
-	txnResp, err := m.client.Txn(ctx).If(cmp).Then(put /*resp.Responses[0]*/, getOwner /*resp.Responses[1]*/).Else(get, getOwner).Commit()
+	txnResp, err := m.client.
+		Txn(ctx).
+		If(cmp).
+		Then(put /*resp.Responses[0]*/, getOwner /*resp.Responses[1]*/).
+		Else(get, getOwner).
+		Commit()
 
 	if err != nil {
 		return err
 	}
 	m.myRev = txnResp.Header.Revision
+	// the compare failed that mean the key is alraedy exised in etcd，So get
+	// the create revision from the get result
 	if txnResp.Succeeded != true {
 		m.myRev = txnResp.Responses[0].GetResponseRange().Kvs[0].CreateRevision
 	}
@@ -68,13 +94,13 @@ func (m *Mutex) AcquireOnce(ctx context.Context) error {
 	if len(ownerKey) == 0 || ownerKey[0].CreateRevision == m.myRev {
 		return nil
 	}
-	return Err("try to lock failed")
+	return ErrAcquire
 
 }
 
-func (m *Mutex) Lock(ctx context.Context) error {
+func (m *Mutex) Acquire(ctx context.Context) error {
 	err := m.AcquireOnce(ctx)
-	if err != nil && !errors.Is(err, Err("try to lock failed")) {
+	if err != nil && !errors.Is(err, ErrAcquire) {
 		return err
 	}
 	err = m.waitRelease(ctx, m.client, m.pfx, m.myRev-1)
@@ -128,7 +154,7 @@ func waitDelete(ctx context.Context, client *v3.Client, key string, rev int64) e
 	return fmt.Errorf("lost watcher waiting for delete")
 }
 
-func (m *Mutex) Unlock(ctx context.Context) error {
+func (m *Mutex) Release(ctx context.Context) error {
 	_, err := m.client.Revoke(ctx, m.leaseId)
 	if err != nil {
 		return err
@@ -137,5 +163,6 @@ func (m *Mutex) Unlock(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	log.Printf("%s unlock success\n", m.myKey)
 	return nil
 }

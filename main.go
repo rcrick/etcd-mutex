@@ -17,34 +17,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	// lock := elock.NewMutex(client, "/etcdlock", 2000)
-	// lock2 := elock.NewMutex(client, "/etcdlock", 2000)
-	// err = lock.Lock(context.Background())
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
-	// lock2.Lock(context.Background())
-	// time.Sleep(3 * time.Second)
-	// err = lock.Unlock(context.Background())
-
 
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
-			lock := elock.NewMutex(client, "/etcdlock", 20)
-			err := lock.Lock(context.Background())
+			defer wg.Done()
+			lock := elock.NewMutex(client, "/etcdlock", 10)
+			err := lock.Acquire(context.Background())
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
 			time.Sleep(3 * time.Second)
-			err = lock.Unlock(context.Background())
+			err = lock.Release(context.Background())
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			wg.Done()
+			
 		}()
 	}
 	wg.Wait()
